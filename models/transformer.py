@@ -85,6 +85,7 @@ class DotProductAttention(tf.keras.layers.Layer):
         query, key, value = inputs
         scores = tf.linalg.matmul(query, key, transpose_b=True) # [BS, seq_length, hidden_size] * [BS, seq_length, hidden_size] -> [BS, seq_length, seq_length]
         hidden_size = tf.cast(self.hidden_size, dtype='float32')
+        scores /= tf.math.sqrt(hidden_size)
         if mask is not None: # [BS, seq_length]
             mask = mask[0]
             mask = tf.cast(mask, dtype="float32")
@@ -92,7 +93,7 @@ class DotProductAttention(tf.keras.layers.Layer):
             mask = tf.expand_dims(mask, axis=1)
             mask = tf.tile(mask, [1, self.head_size, 1, 1])
             scores += -1e9 * (1-mask)
-        weights = tf.keras.backend.softmax(scores/tf.math.sqrt(hidden_size))
+        weights = tf.keras.backend.softmax(scores)
         return tf.linalg.matmul(weights, value)
 
 class CrossAttention(tf.keras.layers.Layer):
@@ -149,13 +150,13 @@ class decoderSelfAttention(tf.keras.layers.Layer):
         key, value = self.wk(x), self.wv(x)
         hidden_size = tf.cast(self.hidden_size, dtype='float32')
         scores = tf.linalg.matmul(query, key, transpose_b=True)
+        scores /= tf.math.sqrt(hidden_size)
         if mask is not None:
             mask = mask[0]
             mask = tf.cast(mask, dtype="float32")
             mask = tf.expand_dims(mask, axis=-1)
-            mask = time_mask * mask
+            mask = (1-time_mask) * mask
             scores += -1e9 * (1-mask)
-        scores /= tf.math.sqrt(hidden_size)
         weights = tf.keras.backend.softmax(scores)
         return tf.linalg.matmul(weights, value)
 

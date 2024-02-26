@@ -81,21 +81,21 @@ val_batches = DataSet(input, 16)
 
 t = transformer()
 
-t.load_weights("test.hdf5")
-# t.add_loss(masked_loss(t.inputs, t.outputs))
-#
-# t.compile(
-#     loss=None,
-#     optimizer=optimizer,
-#     metrics=[masked_accuracy]
-# )
-#
-# # t.summary()
-#
-# t.fit_generator(train_batches,
-#                 epochs=5,
-#                 validation_data=val_batches,
-#                 callbacks = [tf.keras.callbacks.ModelCheckpoint("test.hdf5", monitor="val_loss", mode="min", save_best_only=True, save_weights_only=True, verbose=1)])
+# t.load_weights("test.hdf5")
+t.add_loss(masked_loss(t.inputs, t.outputs))
+
+t.compile(
+    loss=None,
+    optimizer=tf.keras.optimizers.Adam(),
+    metrics=[masked_accuracy]
+)
+
+# t.summary()
+
+t.fit_generator(train_batches,
+                epochs=5,
+                validation_data=val_batches,
+                callbacks = [tf.keras.callbacks.ModelCheckpoint("test.hdf5", monitor="val_loss", mode="min", save_best_only=True, save_weights_only=True, verbose=1)])
 
 
 a = t.predict([np.array([[101, 10, 11, 12, 13, 14, 15, 102]]), np.array([[101, 0, 0, 0, 0, 0, 0, 0]])]) 
