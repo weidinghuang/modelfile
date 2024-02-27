@@ -14,10 +14,12 @@ def reshape_attention_shape(input, head_size=None, flag=True, hidden_size=768):
     '''
     if flag:
         batch_size, seq_length, hidden_size = tf.shape(input)[0], tf.shape(input)[1], tf.shape(input)[2]
+        head_size, hidden_size = 8, 768
         input = tf.reshape(input, [batch_size, seq_length, head_size, hidden_size//head_size])
         input = tf.transpose(input, perm=[0, 2, 1, 3])
     else:
         batch_size, head_size, seq_length, depth = tf.shape(input)[0], tf.shape(input)[1], tf.shape(input)[2], tf.shape(input)[3]
+        head_size, depth = 8, 96
         input = tf.transpose(input, perm=[0, 2, 1, 3])
         input = tf.reshape(input, [batch_size, seq_length, head_size*depth])
     return input
@@ -33,6 +35,7 @@ def encoder_stack(inputs, num_blocks, hidden_size, head_size, dropout_rate):
         intermediate_layernorm = tf.keras.layers.LayerNormalization()(intermediate_add)
         attention_output = tf.keras.layers.Dropout(dropout_rate)(intermediate_layernorm)
         inputs = [attention_output, attention_output, attention_output]
+
 
     return inputs[0]
 
@@ -141,7 +144,7 @@ class decoderSelfAttention(tf.keras.layers.Layer):
     #     super(decoderSelfAttention, self).__init__()
 
     def call(self, inputs, mask=None):
-        x, _, _ = inputs
+        x, y, z = inputs
         x_seq_length = tf.shape(x)[1] #x.shape.as_list[0] # [BS, seq_length, hidden_size]
         time_mask = tf.ones(shape=(x_seq_length, x_seq_length))
         time_mask = tf.linalg.band_part(time_mask, -1, 0)
@@ -156,7 +159,7 @@ class decoderSelfAttention(tf.keras.layers.Layer):
             mask = tf.cast(mask, dtype="float32")
             mask = tf.expand_dims(mask, axis=-1)
             mask = (1-time_mask) * mask
-            scores += -1e9 * (1-mask)
+            scores += -1e9 * mask
         weights = tf.keras.backend.softmax(scores)
         return tf.linalg.matmul(weights, value)
 
@@ -206,48 +209,77 @@ class inputEmbedding(tf.keras.layers.Layer):
     def call(self, inputs):
         return self.add([self.token_embedding(inputs), self.positional_embedding(inputs)])
 
-class encoder(tf.keras.layers.Layer):
-    def __init__(self, input_length, num_blocks, hidden_size, head_size, dropout_rate, vocab_size) -> None:
-        super().__init__()
+class encoderLayer(tf.keras.layers.Layer):
+    def __init__(self, input_length, num_blocks, hidden_size, head_size, dropout_rate, vocab_size, name=None):
+        super().__init__(name=name)
         self.num_blocks = num_blocks
         self.hidden_size = hidden_size
         self.head_size = head_size
         self.dropout_rate = dropout_rate
         self.vocab_size = vocab_size
-        self.input_embedding = inputEmbedding(input_length, vocab_size, hidden_size)
-        self.dropout = tf.keras.layers.Dropout(dropout_rate)
-        self.encoder_attention_list = [Attention(hidden_size, head_size) for _ in range(num_blocks)]
+        self.encoder_attention_list = Attention(hidden_size, head_size)
         self.add_1 = tf.keras.layers.Add()
         self.norm_1 = tf.keras.layers.LayerNormalization()
-        self.dense = tf.keras.layers.Dense(hidden_size)
+        self.dense_up1 = tf.keras.layers.Dense(2048, activation='relu')
+        self.dense_down1 = tf.keras.layers.Dense(hidden_size)
+        self.dropout2 = tf.keras.layers.Dropout(dropout_rate)
+        self.dense_up = tf.keras.layers.Dense(2048, activation='relu')
+        self.dropout1 = tf.keras.layers.Dropout(dropout_rate)
+        self.dense_down = tf.keras.layers.Dense(hidden_size)
         self.add_2 = tf.keras.layers.Add()
         self.norm_2 = tf.keras.layers.LayerNormalization()
-        
+
+    def call(self, inputs):
+        # input embeddings added
+        # input_embedding = self.input_embedding(inputs)
+        # input_embedding = self.dropout(input_embedding)
+        input_embedding = inputs
+        output = self.encoder_attention_list([input_embedding, input_embedding, input_embedding])
+        output = self.dense_up(output)
+        output = self.dense_down(output)
+        output = self.dropout1(output)
+        output = self.add_1([input_embedding, output])
+        output = self.norm_1(output)
+        intermediate_output = self.dense_up1(output)
+        intermediate_output = self.dense_down1(intermediate_output)
+        intermediate_output = self.dropout2(intermediate_output)
+        output = self.add_2([output, intermediate_output])
+        input_embedding = self.norm_2(output)
+
+        return input_embedding
+class encoder(tf.keras.layers.Layer):
+    def __init__(self, input_length, num_blocks, hidden_size, head_size, dropout_rate, vocab_size) -> None:
+        super().__init__()
+        self.num_blocks = num_blocks
+        self.encoder_attention_list = [encoderLayer(input_length,
+                                                   num_blocks,
+                                                   hidden_size,
+                                                   head_size,
+                                                   dropout_rate,
+                                                   vocab_size, name=str(i)) for i in range(num_blocks)]
+        self.input_embedding = inputEmbedding(input_length, vocab_size, hidden_size)
+        self.dropout = tf.keras.layers.Dropout(dropout_rate)
+
+
     def call(self, inputs):
         # input embeddings added
         input_embedding = self.input_embedding(inputs)
         input_embedding = self.dropout(input_embedding)
         for i in range(self.num_blocks):
-            output = self.encoder_attention_list[i]([input_embedding, input_embedding, input_embedding])
-            output = self.add_1([input_embedding, output])
-            output = self.norm_1(output)
-            intermediate_output = self.dense(output)
-            output = self.add_2([output, intermediate_output])
-            input_embedding = self.norm_2(output)
-
+            input_embedding = self.encoder_attention_list[i](input_embedding)
         return input_embedding
 
-class decoder(tf.keras.layers.Layer):
-    def __init__(self, input_length, num_blocks, hidden_size, head_size, dropout_rate, vocab_size) -> None:
-        super().__init__()
+class decoderLayer(tf.keras.layers.Layer):
+    def __init__(self, input_length, num_blocks, hidden_size, head_size, dropout_rate, vocab_size, name=None) -> None:
+        super().__init__(name=name)
         self.input_length = input_length
         self.num_blocks = num_blocks
         self.hidden_size = hidden_size
         self.head_size = head_size
         self.dropout_rate = dropout_rate
-        self.decoder_input_embedding = inputEmbedding(input_length, vocab_size, hidden_size)
-        self.decoder_self_attention_list = [decoderSelfAttention(hidden_size, head_size) for _ in range(num_blocks)]
-        self.decoder_cross_attention_list = [CrossAttention(hidden_size, head_size) for _ in range(num_blocks)]
+        # self.decoder_input_embedding = inputEmbedding(input_length, vocab_size, hidden_size)
+        self.decoder_self_attention_list = decoderSelfAttention(hidden_size, head_size)
+        self.decoder_cross_attention_list = CrossAttention(hidden_size, head_size)
         self.add_1 = tf.keras.layers.Add()
         self.norm_1 = tf.keras.layers.LayerNormalization()
         self.add_2 = tf.keras.layers.Add()
@@ -256,20 +288,63 @@ class decoder(tf.keras.layers.Layer):
         self.add_3 = tf.keras.layers.Add()
         self.norm_3 = tf.keras.layers.LayerNormalization()
 
+        self.dense_up = tf.keras.layers.Dense(2048, activation='relu')
+        self.dense_down = tf.keras.layers.Dense(hidden_size)
+        self.dropout = tf.keras.layers.Dropout(dropout_rate)
+
+        self.dense_up1 = tf.keras.layers.Dense(2048, activation='relu')
+        self.dense_down1 = tf.keras.layers.Dense(hidden_size)
+        self.dropout1 = tf.keras.layers.Dropout(dropout_rate)
+        self.dense_up2 = tf.keras.layers.Dense(2048, activation='relu')
+        self.dense_down2 = tf.keras.layers.Dense(hidden_size)
+        self.dropout2 = tf.keras.layers.Dropout(dropout_rate)
+
+    def call(self, inputs, mask=None):
+        # context, x = inputs
+        # decoder_input_embedding = self.decoder_input_embedding(x)
+        decoder_input_embedding, context = inputs
+        decoder_input = self.decoder_self_attention_list([decoder_input_embedding, decoder_input_embedding, decoder_input_embedding], mask=mask)
+        decoder_input = self.dense_up(decoder_input)
+        decoder_input = self.dense_down(decoder_input)
+        decoder_input = self.dropout(decoder_input)
+        decoder_input = self.add_1([decoder_input_embedding, decoder_input])
+        decoder_input = self.norm_1(decoder_input)
+        output = self.decoder_cross_attention_list([decoder_input, context, context], mask=mask)
+        output = self.dense_up1(output)
+        output = self.dense_down1(output)
+        output = self.dropout1(output)
+        output = self.add_2([decoder_input, output])
+        cross_output = self.norm_2(output)
+        final_output = self.dense_up2(cross_output)
+        final_output = self.dense_down2(final_output)
+        final_output = self.dropout2(final_output)
+        final_output = self.add_3([cross_output, final_output])
+        decoder_input_embedding = self.norm_3(final_output)
+
+        return decoder_input_embedding
+
+
+class decoder(tf.keras.layers.Layer):
+    def __init__(self, input_length, num_blocks, hidden_size, head_size, dropout_rate, vocab_size) -> None:
+        super().__init__()
+        self.decoder_layer_list = [decoderLayer(input_length,
+                                                num_blocks,
+                                                hidden_size,
+                                                head_size,
+                                                dropout_rate,
+                                                vocab_size,
+                                                name=str(i))
+                                   for i in range(num_blocks)
+                                   ]
+        self.num_blocks = num_blocks
+        self.decoder_input_embedding = inputEmbedding(input_length, vocab_size, hidden_size)
+
+
     def call(self, inputs, mask=None):
         context, x = inputs
         decoder_input_embedding = self.decoder_input_embedding(x)
         for i in range(self.num_blocks):
-            decoder_input = self.decoder_self_attention_list[i]([decoder_input_embedding, decoder_input_embedding, decoder_input_embedding], mask=mask)
-            decoder_input = self.add_1([decoder_input_embedding, decoder_input])
-            decoder_input = self.norm_1(decoder_input)
-            output = self.decoder_cross_attention_list[i]([decoder_input, context, context], mask=mask)
-            output = self.add_2([decoder_input, output])
-            cross_output = self.norm_2(output)
-            final_output = self.dense(cross_output)
-            final_output = self.add_3([cross_output, final_output])
-            decoder_input_embedding = self.norm_3(final_output)
-
+            decoder_input_embedding=self.decoder_layer_list[i]([decoder_input_embedding, context])
         return decoder_input_embedding
 
 
@@ -290,7 +365,8 @@ class Transformer(tf.keras.layers.Layer):
         encoder_input, decoder_input = inputs
         encoder_output = self.encoder(encoder_input)
         decoder_output = self.decoder([encoder_output, decoder_input])
-        return decoder_output 
+        final_output = tf.keras.layers.Dense(4235, activation='softmax')(decoder_output)
+        return final_output
 
 
 
