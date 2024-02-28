@@ -7,7 +7,7 @@ tf.config.experimental_run_functions_eagerly(True)
 def transformer():
     input = tf.keras.Input(shape=(None, ))
     target = tf.keras.Input(shape=(None, ))
-    transformer_output = Transformer(8, 30799, 4235)([input, target])
+    transformer_output = Transformer(256, 30799, 4235)([input, target])
     # final_output = tf.keras.layers.Dense(4235)(transformer_output)
     return tf.keras.Model(inputs=[input, target], outputs=transformer_output)
 
@@ -91,22 +91,22 @@ val_batches = DataSet(input,2)
 t = transformer()
 t.summary()
 
-t.load_weights("test.hdf5")
+#t.load_weights("test.hdf5")
 # t.add_loss(masked_loss(t.inputs, t.outputs))
-#
-# t.compile(
-#     loss=masked_loss,
-#     optimizer=optimizer,
-#     metrics=[masked_accuracy],
-#     run_eagerly=True
-# )
-#
-# # t.summary()
-#
-# t.fit(train_batches,
-#                 epochs=5,
-#                 validation_data=val_batches,
-#                 callbacks = [tf.keras.callbacks.ModelCheckpoint("test.hdf5", monitor="val_loss", mode="min", save_best_only=True, save_weights_only=True, verbose=1)])
+
+t.compile(
+    loss=masked_loss,
+    optimizer=optimizer,
+    metrics=[masked_accuracy],
+    run_eagerly=True
+)
+
+# t.summary()
+
+t.fit(train_batches,
+                epochs=5,
+                validation_data=val_batches,
+                callbacks = [tf.keras.callbacks.ModelCheckpoint("test.hdf5", monitor="val_loss", mode="min", save_best_only=True, save_weights_only=True, verbose=1)])
 
 
 a = t.predict([np.array([[101, 10, 11, 12, 13, 14, 15, 102]]), np.array([[4227, 0, 0, 0, 0, 0, 0, 0]])])
