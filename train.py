@@ -1,9 +1,11 @@
 import os, sys
 from models.transformer import Transformer
+from models.online_transformer import Transformer as online_Transformer
 from dataset.DataSets import DataSet, Preprocess
 import numpy as np
 import tensorflow as tf
-tf.executing_eagerly()
+
+tf.config.run_functions_eagerly(True)
 def transformer():
     input = tf.keras.Input(shape=(None, ))
     target = tf.keras.Input(shape=(None, ))
@@ -88,11 +90,21 @@ input = [[source, target] for source, target in zip(p.source[:50], p.target[:50]
 train_batches = DataSet(input, 2)
 val_batches = DataSet(input,2)
 
-t = transformer()
-t.summary()
+# t = transformer()
+# t.summary()
 
-#t.load_weights("test.hdf5")
-# t.add_loss(masked_loss(t.inputs, t.outputs))
+# t.load_weights("test.hdf5")
+# # t.add_loss(masked_loss(t.inputs, t.outputs))
+t = online_Transformer(
+    inputs_vocab_size=30799,
+    target_vocab_size=4235,
+    encoder_count=12,
+    decoder_count=12,
+    attention_head_count=8,
+    d_model=96,
+    d_point_wise_ff=2048,
+    dropout_prob=0.2
+)
 
 t.compile(
     loss=masked_loss,
@@ -109,6 +121,7 @@ t.fit(train_batches,
                 callbacks = [tf.keras.callbacks.ModelCheckpoint("test.hdf5", monitor="val_loss", mode="min", save_best_only=True, save_weights_only=True, verbose=1)])
 
 
-a = t.predict([np.array([[101, 10, 11, 12, 13, 14, 15, 102]]), np.array([[4227, 0, 0, 0, 0, 0, 0, 0]])])
+a = t.predict([np.array([[101, 10, 11, 12, 13, 14, 15, 102]]), np.array([[4226, 3356]])])
 a = np.array(a)
+print(a.argmax(axis=-1))
 print(a)
