@@ -3,11 +3,11 @@ from models.transformer import Transformer
 from dataset.DataSets import DataSet, Preprocess
 import numpy as np
 import tensorflow as tf
-tf.config.experimental_run_functions_eagerly(True)
+tf.executing_eagerly()
 def transformer():
     input = tf.keras.Input(shape=(None, ))
     target = tf.keras.Input(shape=(None, ))
-    transformer_output = Transformer(256, 30799, 4235)([input, target])
+    transformer_output = Transformer(8, 30799, 4235)([input, target])
     # final_output = tf.keras.layers.Dense(4235)(transformer_output)
     return tf.keras.Model(inputs=[input, target], outputs=transformer_output)
 

@@ -1,4 +1,5 @@
 import tensorflow as tf
+import numpy as np
 def get_positional_embedding(max_input_length, hidden_size):
     positions = tf.expand_dims(tf.range(max_input_length, name="pos_embedding_x"), 1) #[seq_len, 1]
     angles = tf.expand_dims(1/(1000**(2*tf.range(hidden_size/2)/hidden_size)), 0) # [1, d_model//2, ]
@@ -23,38 +24,6 @@ def reshape_attention_shape(input, head_size=None, flag=True, hidden_size=768):
         input = tf.transpose(input, perm=[0, 2, 1, 3])
         input = tf.reshape(input, [batch_size, seq_length, head_size*depth])
     return input
-
-def encoder_stack(inputs, num_blocks, hidden_size, head_size, dropout_rate):
-    for i in range(num_blocks):
-        output = Attention(hidden_size, head_size)(inputs)
-        attention_output = tf.keras.layers.Add()([inputs[0], output])
-        attention_output = tf.keras.layers.LayerNormalization()(attention_output)
-        attention_output = tf.keras.layers.Dropout(dropout_rate)(attention_output)
-        intermediate_output = tf.keras.layers.Dense(hidden_size)(tf.keras.layers.Dense(3072)(attention_output))
-        intermediate_add = tf.keras.layers.Add()([attention_output, intermediate_output])
-        intermediate_layernorm = tf.keras.layers.LayerNormalization()(intermediate_add)
-        attention_output = tf.keras.layers.Dropout(dropout_rate)(intermediate_layernorm)
-        inputs = [attention_output, attention_output, attention_output]
-
-
-    return inputs[0]
-
-def decoder_stack(encoder_output, inputs, num_blocks, hidden_size, head_size, dropout_rate):
-    # decoder self attention
-    for i in range(num_blocks):
-        output = decoderSelfAttention(hidden_size, head_size)(inputs) # inputs = [[], [], []]
-        output = tf.keras.layers.Add(inputs[0], output) # inputs[0] is the query emebedding
-        output = tf.keras.layers.LayerNormalization()(output)
-        output = tf.keras.layers.Dropout(dropout_rate)(output)
-        cross_attention_output = CrossAttention(hidden_size, head_size)([output, encoder_output, encoder_output])
-        cross_attention_output = tf.keras.layers.Add(output, cross_attention_output) # inputs[0] is the query emebedding
-        cross_attention_output = tf.keras.layers.LayerNormalization()(cross_attention_output)
-        cross_attention_output = tf.keras.layers.Dropout(dropout_rate)(cross_attention_output)
-        inputs = [cross_attention_output, cross_attention_output, cross_attention_output]
-    return inputs[0]
-        
-
-
 class tokenEmbedding(tf.keras.layers.Layer):
     def __init__(self, vocab_size, hidden_size) -> None:
         super().__init__()
@@ -90,11 +59,8 @@ class DotProductAttention(tf.keras.layers.Layer):
         hidden_size = tf.cast(self.hidden_size, dtype='float32')
         scores /= tf.math.sqrt(hidden_size)
         if mask is not None: # [BS, seq_length]
-            mask = mask[0]
             mask = tf.cast(mask, dtype="float32")
-            mask = tf.expand_dims(mask, axis=-1)
-            mask = tf.expand_dims(mask, axis=1)
-            mask = tf.tile(mask, [1, self.head_size, 1, 1])
+            mask = mask[:, tf.newaxis, tf.newaxis, :]
             scores += -1e9 * (1-mask)
         weights = tf.keras.backend.softmax(scores)
         return tf.linalg.matmul(weights, value)
@@ -108,25 +74,36 @@ class CrossAttention(tf.keras.layers.Layer):
         self.wk = tf.keras.layers.Dense(hidden_size)
         self.wv = tf.keras.layers.Dense(hidden_size)
 
-    # def build(self, input_shape):
-    #     self.wq = self.add_weight(shape=(self.hidden_size), name="CrossAttention_Query_Kernel")
-    #     self.wk = self.add_weight(shape=(self.hidden_size), name="CrossAttention_Key_Kernel")
-    #     self.wv = self.add_weight(shape=(self.hidden_size), name="CrossAttention_Value_Kernel")
-    #     super(CrossAttention, self).__init__()
-
     def call(self, inputs, mask=None):
         x, context_output, context_output = inputs # x is after self attention with time series masking
         # create a lower triangluar matrix mask
-        query = self.wq(x)
-        key, value = self.wk(context_output), self.wv(context_output)
-        scores = tf.linalg.matmul(query, key, transpose_b=True)
+        query, key, value = self.split_head(self.wq(x)), self.split_head(self.wk(context_output)), self.split_head(self.wv(context_output))
         if mask is not None:
             mask = mask[0]
             mask = tf.cast(mask, dtype="float32")
-            mask = tf.expand_dims(mask, axis=-1)
-            scores += -1e9 * (1-mask)
+            mask = mask[:, tf.newaxis, tf.newaxis, :]
+        attention_result= self.dot_product(query, key, value, mask)
+        attention_result = self.concat_head(attention_result)
+        return attention_result
+
+    def split_head(self, input):
+        # [BS, seq_length, hidden_size)
+        BS = tf.shape(input)[0]
+        new_input = tf.reshape(input, [BS, -1, self.head_size, self.hidden_size // self.head_size])
+        return tf.transpose(new_input, [0, 2, 1, 3])
+
+    def concat_head(self, input):
+        BS = tf.shape(input)[0]
+        new_input = tf.transpose(input, [0, 2, 1, 3])
+        return tf.reshape(new_input, [BS, -1, self.hidden_size])
+
+    def dot_product(self, query, key, value, mask):
+        scores = tf.linalg.matmul(query, key, transpose_b=True) / tf.math.sqrt(
+            tf.cast(self.hidden_size, dtype='float32'))
+        scores += -1e9 * (1-mask)
         weights = tf.keras.backend.softmax(scores)
         return tf.linalg.matmul(weights, value)
+
 
 class decoderSelfAttention(tf.keras.layers.Layer):
     def __init__(self, hidden_size, head_size) -> None:
@@ -137,31 +114,43 @@ class decoderSelfAttention(tf.keras.layers.Layer):
         self.wk = tf.keras.layers.Dense(hidden_size)
         self.wv = tf.keras.layers.Dense(hidden_size)
 
-    # def build(self, input_shape):
-    #     self.wq = self.add_weight(shape=(self.hidden_size), name="CrossAttention_Query_Kernel")
-    #     self.wk = self.add_weight(shape=(self.hidden_size), name="CrossAttention_Key_Kernel")
-    #     self.wv = self.add_weight(shape=(self.hidden_size), name="CrossAttention_Value_Kernel")
-    #     super(decoderSelfAttention, self).__init__()
 
     def call(self, inputs, mask=None):
         x, y, z = inputs
         x_seq_length = tf.shape(x)[1] #x.shape.as_list[0] # [BS, seq_length, hidden_size]
         time_mask = tf.ones(shape=(x_seq_length, x_seq_length))
-        time_mask = tf.linalg.band_part(time_mask, -1, 0)
-        time_mask = tf.expand_dims(time_mask, axis=0) # [1, seq_length, seq_length]
-        query = self.wq(x)
-        key, value = self.wk(x), self.wv(x)
-        hidden_size = tf.cast(self.hidden_size, dtype='float32')
-        scores = tf.linalg.matmul(query, key, transpose_b=True)
-        scores /= tf.math.sqrt(hidden_size)
+        time_mask = 1 - tf.linalg.band_part(time_mask, -1, 0)
+        query, key, value = self.split_head(x), self.split_head(y), self.split_head(z)
         if mask is not None:
             mask = mask[0]
-            mask = tf.cast(mask, dtype="float32")
-            mask = tf.expand_dims(mask, axis=-1)
-            mask = (1-time_mask) * mask
-            scores += -1e9 * mask
+            mask = tf.cast(mask, dtype='float32')
+            mask = 1-mask
+            mask = mask[:, tf.newaxis, tf.newaxis, :]
+            new_mask = tf.maximum(time_mask, mask)
+            # new_mask = new_mask[:, tf.newaxis, tf.newaxis, :]
+            mask = new_mask
+        attention_result = self.dot_product(query, value, key, mask)
+        attention_result = self.concat_head(attention_result)
+        return attention_result
+
+    def split_head(self, input):
+        # [BS, seq_length, hidden_size)
+        BS = tf.shape(input)[0]
+        new_input = tf.reshape(input, [BS, -1, self.head_size, self.hidden_size//self.head_size])
+        return tf.transpose(new_input, [0, 2, 1, 3])
+
+    def concat_head(self, input):
+        BS = tf.shape(input)[0]
+        new_input = tf.transpose(input, [0, 2, 1, 3])
+        new_input = tf.reshape(new_input, [BS, -1, self.hidden_size])
+        return new_input
+
+    def dot_product(self, query, key, value, mask):
+        scores = tf.linalg.matmul(query, key, transpose_b=True) /tf.math.sqrt(tf.cast(self.hidden_size, dtype='float32'))
+        scores += -1e9 * mask
         weights = tf.keras.backend.softmax(scores)
         return tf.linalg.matmul(weights, value)
+
 
 class Attention(tf.keras.layers.Layer):
     def __init__(self, hidden_size, head_size) -> None:
@@ -176,25 +165,24 @@ class Attention(tf.keras.layers.Layer):
 
     def call(self, inputs, mask=None, **kwarg):
         q, k, v = inputs
-        query_reshaped = reshape_attention_shape(self.wq(q), self.head_size, True)
-        key_reshaped = reshape_attention_shape(self.wk(k), self.head_size, True)
-        value_reshaped = reshape_attention_shape(self.wv(v), self.head_size, True)
+        query_reshaped = self.split_head(self.wq(q))
+        key_reshaped = self.split_head(self.wk(k))
+        value_reshaped = self.split_head(self.wv(v))
         attention_embedding = self.dot_product_attention([query_reshaped, key_reshaped, value_reshaped], mask=mask)
 
-        output = reshape_attention_shape(attention_embedding, flag=False)
+        output = self.concat_head(attention_embedding)
         return output
 
-def bert(max_input_length, vocab_size, hidden_size=768, head_size=8, num_blocks=12, dropout_rate=0.2):
-    input_tokens = tf.keras.Input(shape=(None, ), name="Input_Tokens")
-    segment_tokens = tf.keras.Input(shape=(None,), name="Segment_Tokens")
-    input_embedding = tf.keras.layers.Embedding(vocab_size, hidden_size, mask_zero=True, name="Input_Embedding")(input_tokens)
-    segment_embedding = tf.keras.layers.Embedding(2, hidden_size, name="Segment_Embedding")(segment_tokens)
-    positional_embedding = positionalEmbedding(max_input_length, hidden_size)(input_embedding)
+    def split_head(self, input):
+        # [BS, seq_length, hidden_size)
+        BS = tf.shape(input)[0]
+        new_input = tf.reshape(input, [BS, -1, self.head_size, self.hidden_size//self.head_size])
+        return tf.transpose(new_input, [0, 2, 1, 3])
 
-    embeddings = tf.keras.layers.Add()([input_embedding, segment_embedding, positional_embedding])
-    encoder_output = encoder_stack([embeddings, embeddings, embeddings], num_blocks, hidden_size, head_size, dropout_rate)
-
-    return tf.keras.Model(inputs=[input_tokens, segment_tokens], outputs=[encoder_output])
+    def concat_head(self, input):
+        BS = tf.shape(input)[0]
+        new_input = tf.transpose(input, [0, 2, 1, 3])
+        return tf.reshape(new_input, [BS, -1, self.hidden_size])
 
 class inputEmbedding(tf.keras.layers.Layer):
     def __init__(self, input_length, vocab_size, hidden_size) -> None:
@@ -229,12 +217,9 @@ class encoderLayer(tf.keras.layers.Layer):
         self.add_2 = tf.keras.layers.Add()
         self.norm_2 = tf.keras.layers.LayerNormalization()
 
-    def call(self, inputs):
-        # input embeddings added
-        # input_embedding = self.input_embedding(inputs)
-        # input_embedding = self.dropout(input_embedding)
+    def call(self, inputs, mask=None):
         input_embedding = inputs
-        output = self.encoder_attention_list([input_embedding, input_embedding, input_embedding])
+        output = self.encoder_attention_list([input_embedding, input_embedding, input_embedding], mask=mask)
         output = self.dense_up(output)
         output = self.dense_down(output)
         output = self.dropout1(output)
@@ -245,8 +230,8 @@ class encoderLayer(tf.keras.layers.Layer):
         intermediate_output = self.dropout2(intermediate_output)
         output = self.add_2([output, intermediate_output])
         input_embedding = self.norm_2(output)
-
         return input_embedding
+
 class encoder(tf.keras.layers.Layer):
     def __init__(self, input_length, num_blocks, hidden_size, head_size, dropout_rate, vocab_size) -> None:
         super().__init__()
@@ -300,8 +285,6 @@ class decoderLayer(tf.keras.layers.Layer):
         self.dropout2 = tf.keras.layers.Dropout(dropout_rate)
 
     def call(self, inputs, mask=None):
-        # context, x = inputs
-        # decoder_input_embedding = self.decoder_input_embedding(x)
         decoder_input_embedding, context = inputs
         decoder_input = self.decoder_self_attention_list([decoder_input_embedding, decoder_input_embedding, decoder_input_embedding], mask=mask)
         decoder_input = self.dense_up(decoder_input)
@@ -340,7 +323,7 @@ class decoder(tf.keras.layers.Layer):
         self.decoder_input_embedding = inputEmbedding(input_length, vocab_size, hidden_size)
 
 
-    def call(self, inputs, mask=None):
+    def call(self, inputs):
         context, x = inputs
         decoder_input_embedding = self.decoder_input_embedding(x)
         for i in range(self.num_blocks):

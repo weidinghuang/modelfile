@@ -99,7 +99,7 @@ class DataSet(tf.keras.utils.Sequence):
                 token_list.append(self.target_char2id['[UNK]'])
         return self.target_padding(token_list)
     
-    def source_padding(self, input, max_length=256, padding_value=0):
+    def source_padding(self, input, max_length=8, padding_value=0):
         length = max_length 
         if len(input) >= length:
             input = input[:length]
@@ -109,7 +109,7 @@ class DataSet(tf.keras.utils.Sequence):
             input = input + [padding_value] * padding_length
         return input
     
-    def target_padding(self, target, max_length=256, padding_value=0):
+    def target_padding(self, target, max_length=8, padding_value=0):
         length = max_length -1
         if len(target) >= length:
             target = target[:length]
