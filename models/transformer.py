@@ -8,6 +8,7 @@ def get_positional_embedding(max_input_length, hidden_size):
     pos_embedding = tf.keras.backend.concatenate([tf.keras.backend.sin(angle_rates), tf.keras.backend.cos(angle_rates)], axis=-1)
     return pos_embedding
 
+
 def reshape_attention_shape(input, head_size=None, flag=True, hidden_size=768):
     '''
     input_size = [BS, seq_len, hidden_size] -> [BS, head_size, seq_len, hidden_size//head_size]
@@ -35,17 +36,23 @@ class tokenEmbedding(tf.keras.layers.Layer):
 
 
 class positionalEmbedding(tf.keras.layers.Layer):
-    def __init__(self, seq_length, hidden_size) -> None:
-        self.seq_length = seq_length
+    def __init__(self, hidden_size) -> None:
         self.hidden_size = hidden_size
         super(positionalEmbedding, self).__init__()
 
-    def build(self, input_shape):
-        self.positional_embedding = get_positional_embedding(self.seq_length, self.hidden_size)
+    # def build(self, input_shape):
+    #     self.positional_embedding = get_positional_embedding(input_shape[1], self.hidden_size)
+    #     super(positionalEmbedding, self).build(input_shape)
 
     def call(self, inputs):
         batch_size = tf.shape(inputs)[0]
-        return tf.tile(tf.expand_dims(self.positional_embedding, 0), [batch_size, 1, 1])
+        seq_length = tf.shape(inputs)[1]
+        positions = tf.expand_dims(tf.range(seq_length, name="pos_embedding_x"), 1) #[seq_len, 1]
+        angles = tf.expand_dims(1/(1000**(2*tf.range(self.hidden_size/2)/self.hidden_size)), 0) # [1, d_model//2, ]
+        positions = tf.cast(positions, dtype="float32")
+        angle_rates = positions * angles
+        pos_embedding = tf.keras.backend.concatenate([tf.keras.backend.sin(angle_rates), tf.keras.backend.cos(angle_rates)], axis=-1)
+        return tf.tile(tf.expand_dims(pos_embedding, 0), [batch_size, 1, 1])
 
 class DotProductAttention(tf.keras.layers.Layer):
     def __init__(self, hidden_size, head_size) -> None:
@@ -76,10 +83,9 @@ class CrossAttention(tf.keras.layers.Layer):
 
     def call(self, inputs, mask=None):
         x, context_output, context_output = inputs # x is after self attention with time series masking
-        # create a lower triangluar matrix mask
         query, key, value = self.split_head(self.wq(x)), self.split_head(self.wk(context_output)), self.split_head(self.wv(context_output))
         if mask is not None:
-            mask = mask[0]
+            mask = mask[1]
             mask = tf.cast(mask, dtype="float32")
             mask = mask[:, tf.newaxis, tf.newaxis, :]
         attention_result= self.dot_product(query, key, value, mask)
@@ -122,8 +128,7 @@ class decoderSelfAttention(tf.keras.layers.Layer):
         time_mask = 1 - tf.linalg.band_part(time_mask, -1, 0)
         query, key, value = self.split_head(x), self.split_head(y), self.split_head(z)
         if mask is not None:
-            mask = mask[0]
-            mask = tf.cast(mask, dtype='float32')
+            mask = mask[1]
             mask = 1-mask
             mask = mask[:, tf.newaxis, tf.newaxis, :]
             new_mask = tf.maximum(time_mask, mask)
@@ -191,7 +196,7 @@ class inputEmbedding(tf.keras.layers.Layer):
         self.vocab_size = vocab_size
         self.hidden_size = hidden_size
         self.token_embedding = tf.keras.layers.Embedding(vocab_size, hidden_size, mask_zero=True)
-        self.positional_embedding = positionalEmbedding(input_length, hidden_size)
+        self.positional_embedding = positionalEmbedding(hidden_size)
         self.add = tf.keras.layers.Add()
 
     def call(self, inputs):
@@ -262,7 +267,6 @@ class decoderLayer(tf.keras.layers.Layer):
         self.hidden_size = hidden_size
         self.head_size = head_size
         self.dropout_rate = dropout_rate
-        # self.decoder_input_embedding = inputEmbedding(input_length, vocab_size, hidden_size)
         self.decoder_self_attention_list = decoderSelfAttention(hidden_size, head_size)
         self.decoder_cross_attention_list = CrossAttention(hidden_size, head_size)
         self.add_1 = tf.keras.layers.Add()
@@ -323,11 +327,11 @@ class decoder(tf.keras.layers.Layer):
         self.decoder_input_embedding = inputEmbedding(input_length, vocab_size, hidden_size)
 
 
-    def call(self, inputs):
+    def call(self, inputs, mask=None):
         context, x = inputs
         decoder_input_embedding = self.decoder_input_embedding(x)
         for i in range(self.num_blocks):
-            decoder_input_embedding=self.decoder_layer_list[i]([decoder_input_embedding, context])
+            decoder_input_embedding=self.decoder_layer_list[i]([decoder_input_embedding, context], mask=mask)
         return decoder_input_embedding
 
 
