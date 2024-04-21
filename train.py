@@ -97,7 +97,7 @@ val_batches = DataSet(input,2)
 t = transformer()
 t.summary()
 
-t.load_weights("initial_weights.hdf5")
+# t.load_weights("initial_weights.hdf5")
 # t = online_Transformer(
 #     inputs_vocab_size=30799,
 #     target_vocab_size=4235,

@@ -156,6 +156,59 @@ class Preprocess():
                 for word in s:
                     fw.write(word+'\n')
 
+class bert_dataset(object):
+    def __init__(self, file_name, label_file):
+        self.file_name = file_name
+        self.label_file = label_file
+
+    def load_file(self, file_name):
+        with open(file_name, 'r', encoding='utf-8') as fr:
+            for line in fr:
+                spline = line.strip().split('\t')
+                try:
+                    input_text, label = spline
+                except Exception as e:
+                    print("error splitting data %s" %e)
+
+    def tokenize(self, input_text):
+        token_list = []
+        for word in input_text:
+            if word in self.vocab_dict:
+                token_list.append(self.vocab_dict[word])
+            else:
+                token_list.append('[UNK]')
+        return token_list
+    def text_to_id(self, input_text):
+        pass
+
+    @classmethod
+    def data_generator(self):
+        input_token = [101, 1, 2, 3, 4, 5, 6, 102]
+        input_type_token = [0, 0, 0, 0, 0, 0]
+        label_class = 1
+        batch_size = 8
+        while True:
+            x = []
+            x1 = []
+            x2 = []
+            y = []
+            for _ in range(100):
+                x1.append(input_token)
+                x2.append(np.array(input_type_token))
+                y.append(np.array(label_class))
+                if len(x1) == batch_size:
+                    x.append(np.array(x1))
+                    yield x, y
+                    x = []
+                    x1 = []
+                    x2 = []
+                    y = []
+
+
+
+
+
+
 if __name__ == "__main__":
     p = Preprocess("../data/train_data/translate_data.xlsx")
     p.get_vocab("../data/vocab/source_vocab.txt", "../data/vocab/target_vocab.txt")
