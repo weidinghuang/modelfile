@@ -350,6 +350,10 @@ class Transformer(tf.keras.layers.Layer):
         # final_output = tf.keras.layers.Dense(4235, activation='softmax')(decoder_output)
         return encoder_output
 
+def build_bert():
+    input_token = tf.keras.Input(shape=(None, ), name="input_token")
+    input_embedding = tf.keras.layers.Embedding(150, 2000)(input_token)
+    return tf.keras.Model(inputs=input_token, outputs=input_embedding)
 
 
 if __name__ == "__main__":
@@ -360,10 +364,21 @@ if __name__ == "__main__":
         input = tf.keras.Input(shape=(None, ))
         # target = tf.keras.Input(shape=(None, ))
         transformer_output = Transformer(8, 3000, 2000)([input, input])
+        output = transformer_output[:, 0, :]
+        output = tf.keras.layers.Dense(2, activation='softmax')(output)
 
-        return tf.keras.Model(inputs=input, outputs=transformer_output)
+        return tf.keras.Model(inputs=input, outputs=output)
+    # model = tf.keras.models.Sequential()
+    # model.add(tf.keras.layers.Embedding(150, 2000))
+    # model.add(tf.keras.layers.Dense(2, activation='softmax'))
+    # model.summary()
+    # model.compile(optimizer='adam', loss='categorical_crossentropy', metrics='acc')
+    # print(model.predict(bert_dataset.data_generator()))
+    #model.fit(bert_dataset.data_generator(), epochs=1, batch_size=2, steps_per_epoch=3, validation_data=bert_dataset.data_generator(), validation_steps=3)
     t = transformer()
     t.summary()
-    t.compile(loss='categorical_crossentropy', metrics='acc')
-    t.fit(x=bert_dataset.data_generator(), callbacks=[tf.keras.callbacks.ModelCheckpoint('bert_test.hdf5', monitor='val_acc',save_best_only=True)])
+    t.compile(optimizer=tf.keras.optimizers.SGD(), loss='categorical_crossentropy', metrics='acc')
+    # t.fit(bert_dataset.data_generator(), epochs=5, steps_per_epoch=3, callbacks=[tf.keras.callbacks.ModelCheckpoint('bert_test.hdf5', monitor='acc',save_best_only=True)])
+    t.load_weights("bert_test.hdf5")
+    print(t.predict([[101, 1, 2, 3, 4, 5, 6, 102]]))
 

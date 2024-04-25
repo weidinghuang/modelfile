@@ -185,8 +185,8 @@ class bert_dataset(object):
     def data_generator(self):
         input_token = [101, 1, 2, 3, 4, 5, 6, 102]
         input_type_token = [0, 0, 0, 0, 0, 0]
-        label_class = 1
-        batch_size = 8
+        label_class = [1, 0]
+        batch_size = 2
         while True:
             x = []
             x1 = []
@@ -197,7 +197,9 @@ class bert_dataset(object):
                 x2.append(np.array(input_type_token))
                 y.append(np.array(label_class))
                 if len(x1) == batch_size:
-                    x.append(np.array(x1))
+                    x = np.array(x1)
+                    y = np.array(y)
+                    print(x.shape, y.shape)
                     yield x, y
                     x = []
                     x1 = []
@@ -210,9 +212,12 @@ class bert_dataset(object):
 
 
 if __name__ == "__main__":
-    p = Preprocess("../data/train_data/translate_data.xlsx")
-    p.get_vocab("../data/vocab/source_vocab.txt", "../data/vocab/target_vocab.txt")
+    # p = Preprocess("../data/train_data/translate_data.xlsx")
+    # p.get_vocab("../data/vocab/source_vocab.txt", "../data/vocab/target_vocab.txt")
     # input = [[source, target] for source, target in zip(p.source, p.target)]
     # data = DataSet(input, 2)
     # a=data.__getitem__(0)
     # print(a[0])
+    a, b = bert_dataset.data_generator()
+    print(a.shape)
+    print(b)
