@@ -182,25 +182,24 @@ class bert_dataset(object):
         pass
 
     @classmethod
-    def data_generator(self):
-        input_token = [101, 1, 2, 3, 4, 5, 6, 102]
+    def data_generator(cls):
+        input_token = [[101, 1, 2, 3, 4, 5, 6, 102], [101, 6, 5, 4, 3, 2, 1, 102]]
         input_type_token = [0, 0, 0, 0, 0, 0]
-        label_class = [1, 0]
+        label_class = [[1, 0], [0, 1]]
         batch_size = 2
         while True:
             x = []
             x1 = []
             x2 = []
             y = []
-            for _ in range(100):
-                x1.append(input_token)
+            for i in range(100):
+                x1.append(input_token[i%2])
                 x2.append(np.array(input_type_token))
-                y.append(np.array(label_class))
+                y.append(np.array(label_class[i%2]))
                 if len(x1) == batch_size:
-                    x = np.array(x1)
+                    x .append(np.array(x1))
                     y = np.array(y)
-                    print(x.shape, y.shape)
-                    yield x, y
+                    yield x, [y]
                     x = []
                     x1 = []
                     x2 = []

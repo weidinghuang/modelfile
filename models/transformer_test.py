@@ -331,8 +331,8 @@ class decoder(tf.keras.layers.Layer):
 
 
 class Transformer(tf.keras.layers.Layer):
-    def __init__(self, input_length, input_vocab_size, target_vocab_size, hidden_size=768, head_size=8, num_blocks=1, dropout_rate=0.2) -> None:
-        super(Transformer, self).__init__() 
+    def __init__(self, input_length, input_vocab_size, target_vocab_size, hidden_size=768, head_size=8, num_blocks=1, dropout_rate=0.2, **kwargs):
+        super(Transformer, self).__init__(**kwargs) 
         self.input_length = input_length
         self.input_vocab_size = input_vocab_size
         self.target_vocab_size = target_vocab_size
@@ -349,6 +349,19 @@ class Transformer(tf.keras.layers.Layer):
         # decoder_output = self.decoder([encoder_output, decoder_input])
         # final_output = tf.keras.layers.Dense(4235, activation='softmax')(decoder_output)
         return encoder_output
+    
+    def get_config(self):
+
+        config = super().get_config().copy()
+        # config.update({
+        #     'vocab_size': self.vocab_size,
+        #     'num_layers': self.num_layers,
+        #     'units': self.units,
+        #     'd_model': self.d_model,
+        #     'num_heads': self.num_heads,
+        #     'dropout': self.dropout,
+        # })
+        return config
 
 def build_bert():
     input_token = tf.keras.Input(shape=(None, ), name="input_token")
@@ -357,28 +370,73 @@ def build_bert():
 
 
 if __name__ == "__main__":
+    import sys
+    sys.path.insert(0,"../")
     from dataset.DataSets import bert_dataset
+    from dataset.trans_dataset import DataSet_trilabels
     import tensorflow as tf
+    from tensorflow.keras.layers import Lambda
     tf.config.run_functions_eagerly(True)
     def transformer():
         input = tf.keras.Input(shape=(None, ))
         # target = tf.keras.Input(shape=(None, ))
         transformer_output = Transformer(8, 3000, 2000)([input, input])
-        output = transformer_output[:, 0, :]
+        output = Lambda(lambda x: x[:, 0, :])(transformer_output)
         output = tf.keras.layers.Dense(2, activation='softmax')(output)
 
         return tf.keras.Model(inputs=input, outputs=output)
     # model = tf.keras.models.Sequential()
     # model.add(tf.keras.layers.Embedding(150, 2000))
+    # model.add(tf.keras.layers.Lambda(lambda x: x[:, 0, :]))
     # model.add(tf.keras.layers.Dense(2, activation='softmax'))
     # model.summary()
     # model.compile(optimizer='adam', loss='categorical_crossentropy', metrics='acc')
-    # print(model.predict(bert_dataset.data_generator()))
-    #model.fit(bert_dataset.data_generator(), epochs=1, batch_size=2, steps_per_epoch=3, validation_data=bert_dataset.data_generator(), validation_steps=3)
-    t = transformer()
-    t.summary()
-    t.compile(optimizer=tf.keras.optimizers.SGD(), loss='categorical_crossentropy', metrics='acc')
-    # t.fit(bert_dataset.data_generator(), epochs=5, steps_per_epoch=3, callbacks=[tf.keras.callbacks.ModelCheckpoint('bert_test.hdf5', monitor='acc',save_best_only=True)])
-    t.load_weights("bert_test.hdf5")
-    print(t.predict([[101, 1, 2, 3, 4, 5, 6, 102]]))
+    # model.fit(bert_dataset.data_generator(), epochs=1, steps_per_epoch=100, callbacks=[tf.keras.callbacks.ModelCheckpoint('bert_test.hdf5', monitor='acc',save_best_only=True)])
+    # print(model.predict([[101, 1, 2, 3, 4, 5, 6, 102]]))
+    # print(model.predict([[101, 6, 5, 4, 3 ,2 ,1,102]]))
+    # t = transformer()
+    # t.summary()
+    # t.compile(optimizer=tf.keras.optimizers.SGD(), loss='categorical_crossentropy', metrics='acc')
+    # t.fit(bert_dataset.data_generator(), epochs=5, steps_per_epoch=100, callbacks=[tf.keras.callbacks.ModelCheckpoint('bert_test.hdf5', monitor='acc',save_best_only=True)])
+    # # t.load_weights("bert_test.hdf5")
+    # print(t.predict([[101, 1, 2, 3, 4, 5, 6, 102]]))
 
+    train_data = DataSet_trilabels(vocab_file='/repos/model/uncased_L-12_H-768_A-12/vocab.txt', 
+                                data_type='train', 
+                                do_lower_case=True,
+                                label_path= ["data/ibu_hotel/train_labels/first_layer_labels.txt", 
+                                                "data/ibu_hotel/train_labels/second_layer_labels.txt", 
+                                                "data/ibu_hotel/train_labels/third_layer_labels.txt"]
+                                )
+    train_data.read_from_file("data/ibu_hotel/train_data/all_data.txt")
+    valid_data = DataSet_trilabels(vocab_file='/repos/model/uncased_L-12_H-768_A-12/vocab.txt', 
+                                data_type='valid',
+                                model=model,
+                                do_lower_case=True,
+                                label_path= ["data/ibu_hotel/train_labels/first_layer_labels.txt", 
+                                                "data/ibu_hotel/train_labels/second_layer_labels.txt", 
+                                                "data/ibu_hotel/train_labels/third_layer_labels.txt"]
+                                )
+    valid_data.read_from_file("data/ibu_hotel/train_data/all_data.txt")
+
+
+# from datetime import datetime
+# from tensorflow import keras
+# logdir="./logs/fit/" + datetime.now().strftime("%Y%m%d-%H%M%S")
+# tensorboard_callback = keras.callbacks.TensorBoard(log_dir=logdir)
+
+# firstLayerOutput = calculateClassWeights("data/ibu_hotel/train_.txt", "data/ibu_hotel/train_labels/first_layer_labels.txt", 0)
+# secondLayerOutput = calculateClassWeights("data/ibu_hotel/test.txt", "data/ibu_hotel/train_labels/second_layer_labels.txt",1)
+# secondLayerOutput = calculateClassWeights("data/ibu_hotel/test.txt", "data/ibu_hotel/train_labels/third_layer_labels.txt",2)
+    model.fit_generator(train_data.data_generator(), 
+                        epochs=1, 
+                        steps_per_epoch=np.ceil(train_data.count/CONFIG.BatchSize), 
+                        validation_data=valid_data.data_generator(), 
+                        validation_steps=np.ceil(valid_data.count/CONFIG.BatchSize),
+                        callbacks=[custom_callback(),
+                                ModelCheckpoint('test.hdf5', 
+                                                monitor='val_f1', 
+                                                mode='max', 
+                                                save_best_only=True, 
+                                                save_weights_only=True, 
+                                                verbose=1)])
