@@ -3,7 +3,7 @@ import tensorflow as tf
 import six
 class PARAMS(object):
     def __init__(self,
-                 BatchSize=32,
+                 BatchSize=2,
                  VocabSize=130,
                  HiddenSize=768,
                  MaxSeqLength=60,

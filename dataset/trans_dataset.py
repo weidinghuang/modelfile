@@ -2,6 +2,8 @@
 '''
 Generate data to train the model
 '''
+import sys
+sys.path.insert(0, "../")
 from random import shuffle
 import numpy as np
 from config import CONFIG
@@ -639,8 +641,9 @@ class DataSet_trilabels():
                 semantic_list.append(semantic_one_hot_array)
                 if len(input_id_lst) == CONFIG.BatchSize and len(intent_list) == CONFIG.BatchSize:
                     x.append(np.array(input_id_lst))
-                    x.append(np.array(input_type_lst))
-                    yield x, [intent_list]
+                    # x.append(np.array(input_type_lst))
+                    print(x[0].shape)
+                    return x, [intent_list]
                     x = []
                     domain_list = []
                     intent_list = []
@@ -714,9 +717,11 @@ class DataSet_trilabels():
 
 
 if __name__ == "__main__":
-    test = DataSet_MonoData(vocab_dir='model/chinese_L-12_H-768_A-12/vocab.txt', data_type='train')
-    test.load_labels('data/domain_and_intent/domain_cat.txt', 'data/domain_and_intent/intent_cat.txt')
-    test.read_from_multi_files("data/domain_and_intent/raw_data/20230718/train2/train_files")
+    import sys
+    sys.path.insert(0, "../")
+    test = DataSet_trilabels(vocab_file='/repos/model/chinese_L-12_H-768_A-12/vocab.txt', data_type='train')
+    test.load_labels(['/repos/weidingh_transformer/data/ibu_hotel/train_labels/first_layer_labels.txt', '/repos/weidingh_transformer/data/ibu_hotel/train_labels/second_layer_labels.txt', '/repos/weidingh_transformer/data/ibu_hotel/train_labels/third_layer_labels.txt'])
+    test.read_from_file("/repos/weidingh_transformer/data/ibu_hotel/train_data/test_data.txt")
     test.data_generator()
     a = test.sent_to_idx(['[CLS]']+[char for char in "这是一个测试"]+['[SEP]'])
     print(a)
