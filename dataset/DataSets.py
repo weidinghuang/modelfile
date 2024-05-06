@@ -5,6 +5,7 @@ import tensorflow as tf
 import pandas as pd
 import os
 import numpy as np
+
 class DataSet(tf.keras.utils.Sequence):
 
     def __init__(self, input, batch_size) -> None:
@@ -206,17 +207,145 @@ class bert_dataset(object):
                     y = []
 
 
+class new_dataset():
+    def __init__(self, source_file) -> None:
+        self.source_file = source_file
+
+    def build_vocab(self, file, source_file, target_file):
+        s_source = set()
+        s_target = set()
+        fw_source = open(source_file, 'w', encoding='utf-8')
+        fw_target = open(target_file, 'w', encoding='utf-8')
+        with open(file, 'r', encoding='utf-8') as fr:
+            for line in fr:
+                source, target = line.split('%%')
+                for word in source:
+                    s_source.add(word)
+                for word in target:
+                    s_target.add(word)
+
+        for word in s_source:
+            fw_source.write(word+'\n')
+        for word in s_target:
+            fw_target.write(word+'\n')
+        print("done")
+
+    def load_vocab(self, source_vocab, target_vocab):
+        idx = 0
+        self.source_vocab_dict = {}
+        self.source_vocab_reverse = {}
+        with open(source_vocab, 'r', encoding='utf-8') as fr:
+            for line in fr:
+                char = line.strip()
+                self.source_vocab_dict[char] = idx
+                self.source_vocab_reverse[idx] = char
+                idx += 1
+
+        idx = 0
+        self.target_vocab_dict = {}
+        self.target_vocab_reverse = {}
+        with open(target_vocab, 'r', encoding='utf-8') as fr:
+            for line in fr:
+                char = line.strip()
+                self.target_vocab_dict[char] = idx
+                self.target_vocab_reverse[idx] = char
+                idx += 1
+
+    def train_gen(self):
+        self.load_file(self.source_file)
+        self.batch_size = 2
+        x = []
+        y = []
+        output_y = []
+        while True:
+            for i in range(len(self.token_list)):
+                pairs = self.token_list[i]
+                source, target = pairs
+                x.append(source)
+                y.append(target[:-1])
+                tmp = []
+                for i, idx in enumerate(target):
+                    if i == 0:
+                        continue
+                    base = np.zeros(88, dtype='int32')
+                    base[idx] = 1
+                    tmp.append(base)
+                output_y.append(tmp)
+
+                if len(x) == self.batch_size:
+                    # x = np.array(x)
+                    # y = np.array(y)
+                    # print(x[1])
+                    # print(y.shape)
+                    return  (x,y), output_y
+                    x = []
+                    x1 = []
+                    output_y = []
+                    y = []
+
+
+
+    def load_file(self, file):
+        token_list = []
+        with open(file, 'r', encoding='utf-8') as fr:
+            for line in fr:
+                source, target = line.split('%%')
+                source_tmp = []
+                for char in source:
+                    if char in self.source_vocab_dict:
+                        source_tmp.append(self.source_vocab_dict[char])
+                    else:
+                        source_tmp.append(self.source_vocab_dict['[UNK]'])
+                source_tmp = self.pad_to_max(source_tmp, type="source")
+
+                target_tmp = []
+                target_tmp.append(self.target_vocab_dict['[BOS]'])
+                for char in target:
+                    if char in self.target_vocab_dict:
+                        target_tmp.append(self.target_vocab_dict[char])
+                    else:
+                        target_tmp.append(self.target_vocab_dict['[UNK]'])
+                target_tmp.append(self.target_vocab_dict['[EOS]'])
+                target_tmp = self.pad_to_max(target_tmp, type="target")
+                token_list.append([source_tmp, target_tmp])
+        self.token_list = token_list
+        self.length = len(self.token_list)
+
+    def pad_to_max(self, token_list, type):
+        if type == "target":
+            if len(token_list) >= 50:
+                return token_list[:49]+[self.target_vocab_dict['[EOS]']]
+            else:
+                padding_length = 50 - len(token_list)
+                token_list.extend([0] * padding_length)
+                return token_list
+        else:
+            if len(token_list) >= 50:
+                return token_list[:50]
+            else:
+                padding_length = 50 - len(token_list)
+                token_list.extend([0] * padding_length)
+                return token_list
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
 
 if __name__ == "__main__":
-    # p = Preprocess("../data/train_data/translate_data.xlsx")
-    # p.get_vocab("../data/vocab/source_vocab.txt", "../data/vocab/target_vocab.txt")
-    # input = [[source, target] for source, target in zip(p.source, p.target)]
-    # data = DataSet(input, 2)
-    # a=data.__getitem__(0)
-    # print(a[0])
-    a, b = bert_dataset.data_generator()
-    print(a.shape)
-    print(b)
+    dataset = new_dataset("../data/raw_data/formatted_data.txt")
+    # dataset.build_vocab("../data/raw_data/formatted_data.txt", "source_vocab.txt", "target_vocab.txt")
+    dataset.load_vocab("source_vocab.txt", "target_vocab.txt")
+    x, y = dataset.train_gen()
+    print(x)

@@ -70,6 +70,7 @@ class DotProductAttention(tf.keras.layers.Layer):
         #     mask = tf.cast(mask, dtype="float32")
         #     mask = mask[:, tf.newaxis, tf.newaxis, :]
         #     scores += -1e9 * (1-mask)
+        scores += -1e9*mask
         weights = tf.keras.backend.softmax(scores)
         return tf.linalg.matmul(weights, value)
 
@@ -109,7 +110,7 @@ class CrossAttention(tf.keras.layers.Layer):
     def dot_product(self, query, key, value, mask):
         scores = tf.linalg.matmul(query, key, transpose_b=True) / tf.math.sqrt(
             tf.cast(self.hidden_size, dtype='float32'))
-        scores += -1e9 * (1-mask)
+        scores += -1e9 * mask
         weights = tf.keras.backend.softmax(scores)
         return tf.linalg.matmul(weights, value)
 
@@ -137,6 +138,7 @@ class decoderSelfAttention(tf.keras.layers.Layer):
         #     new_mask = tf.maximum(time_mask, mask)
         #     # new_mask = new_mask[:, tf.newaxis, tf.newaxis, :]
         #     mask = new_mask
+        mask = -1e9 * mask
         attention_result = self.dot_product(query, value, key, mask)
         attention_result = self.concat_head(attention_result)
         return attention_result
@@ -288,20 +290,14 @@ class decoderLayer(tf.keras.layers.Layer):
         self.dropout2 = tf.keras.layers.Dropout(dropout_rate)
 
     def call(self, inputs, mask=[]):
-        print("decoder mask")
-        print(mask)
         decoder_input_embedding, context = inputs
         decoder_input = self.decoder_self_attention_list([decoder_input_embedding, decoder_input_embedding, decoder_input_embedding], mask=mask[0])
-        print("decoder input")
-        print(decoder_input)
         decoder_input = self.dense_up(decoder_input)
         decoder_input = self.dense_down(decoder_input)
         decoder_input = self.dropout(decoder_input)
         decoder_input = self.add_1([decoder_input_embedding, decoder_input])
         decoder_input = self.norm_1(decoder_input)
         output = self.decoder_cross_attention_list([decoder_input, context, context], mask=mask[1])
-        print("cross attention")
-        print(output)
         output = self.dense_up1(output)
         output = self.dense_down1(output)
         output = self.dropout1(output)
@@ -312,8 +308,6 @@ class decoderLayer(tf.keras.layers.Layer):
         final_output = self.dropout2(final_output)
         final_output = self.add_3([cross_output, final_output])
         decoder_input_embedding = self.norm_3(final_output)
-        print("decoder input embedding")
-        print(decoder_input_embedding)
 
         return decoder_input_embedding
 
@@ -337,8 +331,6 @@ class decoder(tf.keras.layers.Layer):
     def call(self, inputs, mask=None):
         context, x = inputs
         decoder_input_embedding = self.decoder_input_embedding(x)
-        print("decoder input embedding")
-        print(decoder_input_embedding)
         for i in range(self.num_blocks):
             decoder_input_embedding=self.decoder_layer_list[i]([decoder_input_embedding, context], mask=mask)
         return decoder_input_embedding
@@ -359,15 +351,9 @@ class Transformer(tf.keras.layers.Layer):
 
     def call(self, inputs):
         encoder_input, decoder_input = inputs
-        print("decoder input")
-        print(decoder_input)
         encoder_padding_mask, look_ahead_mask, cross_attention_mask = self.get_masks(encoder_input, decoder_input)
         encoder_output = self.encoder(encoder_input, mask=encoder_padding_mask)
-        print("encoder output")
-        print(encoder_output)
         decoder_output = self.decoder([encoder_output, decoder_input], mask=[look_ahead_mask, cross_attention_mask])
-        print("decoder ooutput")
-        print(decoder_output)
         # final_output = tf.keras.layers.Dense(4235, activation='softmax')(decoder_output)
         return decoder_output
     
@@ -413,28 +399,50 @@ def build_bert():
 if __name__ == "__main__":
     import sys
     sys.path.insert(0,"../")
-    from dataset.DataSets import bert_dataset
+    from dataset.DataSets import bert_dataset, new_dataset
     from dataset.trans_dataset import DataSet_trilabels
     import tensorflow as tf
     from tensorflow.keras.layers import Lambda
-    tf.config.run_functions_eagerly(True)
-    tf.executing_eagerly()
+    from tensorflow.keras.callbacks import ModelCheckpoint
     def transformer():
         input = tf.keras.Input(shape=(None, ))
         target = tf.keras.Input(shape=(None, ))
-        transformer_output = Transformer(8, 3000, 2000)([input, target])
+        transformer_output = Transformer(50, 163, 88)([input, target])
         # output = Lambda(lambda x: x[:, 0, :])(transformer_output)
-        output = tf.keras.layers.Dense(2000, activation='softmax')(transformer_output)
+        output = tf.keras.layers.Dense(88, activation='softmax')(transformer_output)
+        # output = tf.argmax(output, axis=-1)
         # output = Lambda(lambda x: x[0, :, :])(output)
-        # print(output)
 
         return tf.keras.Model(inputs=[input, target], outputs=output)
     model = transformer()
-    # print([(i.shape, i.dtype) for i in model.inputs])
     # model.summary()
-    # model.fit(bert_dataset.data_generator(), epochs=5, steps_per_epoch=100, callbacks=[tf.keras.callbacks.ModelCheckpoint('bert_test.hdf5', monitor='acc',save_best_only=True)])
-    a = model.predict((np.array([[101,1,102]]), np.array([[1, 5, 4, 6]])))
-    print(a.shape)
+    # model.compile(optimizer=tf.keras.optimizers.SGD(), loss='categorical_crossentropy', metrics='acc')
+    # dataset = new_dataset("../data/raw_data/formatted_data.txt")
+    # dataset.load_vocab("../dataset/source_vocab.txt", "../dataset/target_vocab.txt")
+    # train_gen = tf.data.Dataset.from_generator(dataset.train_gen,
+    #                                            output_signature=(
+    #      (tf.TensorSpec(shape=(None, None), dtype=tf.int32),tf.TensorSpec(shape=(None, None), dtype=tf.int32)),
+    #      tf.TensorSpec(shape=(None, None, None), dtype=tf.int32)))
+    # model.fit_generator(train_gen, epochs=10, steps_per_epoch=1000//8,
+    #                     callbacks=[
+    #                             ModelCheckpoint('test.hdf5',
+    #                                             monitor='acc',
+    #                                             mode='max',
+    #                                             save_best_only=True,
+    #                                             save_weights_only=True,
+    #                                             verbose=1)])
+    model.load_weights("test.hdf5")
+    input = np.array([[69, 156, 15, 82, 79, 160, 162, 51, 79, 162, 142, 79, 132, 143, 79, 122, 11, 51, 82, 79, 127, 162, 160, 120, 60, 162, 157, 132, 138, 82, 138, 144, 138, 143, 9, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]])
+    target = np.array([[86, 12, 85, 85, 37]])
+    b = 0
+    while b != 87:
+        a = model.predict((input, target))
+        print(a)
+        b = np.argmax(a, -1)[:, -1]
+        print(b)
+        break
+        # target += b
+    #
     # model = tf.keras.models.Sequential(model1.run_eagerly = True)
     # model.add(tf.keras.layers.Embedding(150, 2000))
     # model.add(tf.keras.layers.Lambda(lambda x: x[:, 0, :]))
